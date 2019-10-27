@@ -71,3 +71,8 @@ case class Tag(val uid:Int,val mid:Int,val tag:String,val timestamp:Int)
 
 case class MongoConfig(val uri:String,val db:String)
 
+/**
+  * ElasticSearch 配置对象
+  */
+
+case class ESConfig(val httpHosts:String,val transportHosts:String,val index:String,val clusterName:String)

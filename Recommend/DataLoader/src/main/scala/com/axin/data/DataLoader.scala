@@ -1,10 +1,19 @@
 package com.axin.data
 
-import com.axin.data.DataLoader.MOVIES_COLLECTION_NAME
+
+
+import java.net.InetAddress
+
 import com.mongodb.casbah.commons.MongoDBObject
 import com.mongodb.casbah.{MongoClient, MongoClientURI}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest
+import org.elasticsearch.common.settings.Settings
+import org.elasticsearch.common.transport.InetSocketTransportAddress
+import org.elasticsearch.transport.client.PreBuiltTransportClient
 
 /**
   * Created by Axin in 2019/10/26 23:14
@@ -68,6 +77,15 @@ object DataLoader {
   val RATINGS_COLLECTION_NAME = "Rating"
   //Tag在MongoDB中的Collection名称【表】
   val TAGS_COLLECTION_NAME = "Tag"
+
+  //ES 中的TYPE名称【表】
+  val ES_TAG_TYPE_NAME = "Movie"
+
+  //拆分ES地址的正常表达式
+  //.r：表示将字符串指定为一个正则表达式
+  //192.168.110.110:9300
+  val ES_HOST_PORT_REGEX = "(.+):(\\d+)".r
+
   def main(args: Array[String]): Unit = {
 
     val DATAFILE_MOVIES = "E:\\Workspace_IDEA\\MovieRecommendSystem\\Recommend\\DataLoader\\src\\data\\movies.csv"
@@ -79,14 +97,28 @@ object DataLoader {
     params += "spark.cores" -> "local[2]"
     params += "mongo.uri" -> "mongodb://192.168.110.110:27017/recom"
     params += "mongo.db" -> "recom"
+    //ES对外端口
+    params += "es.httpHosts" -> "192.168.110.110:9200"
+    //ES集群中内部通信接口
+    params += "es.transportHosts" -> "192.168.110.110:9300"
+    params += "es.index" -> "recom"
+    params += "es.cluster.name" -> "my-application"
+
+
 
     //声明Spark 环境
     var config = new SparkConf().setAppName("DataLoader")
                               .setMaster(params("spark.cores").asInstanceOf[String])
 
-    //隐式对象
+    //定义MongoDB隐式的配置对象
     implicit val mongoConfig = new MongoConfig(params("mongo.uri").asInstanceOf[String],
                           params("mongo.db").asInstanceOf[String])
+
+    //定义ElasticSearch隐式的配置对象
+    implicit val esConfig = new ESConfig(params("es.httpHosts").asInstanceOf[String],
+                                params("es.transportHosts").asInstanceOf[String],
+                                params("es.index").asInstanceOf[String],
+                                  params("es.cluster.name").asInstanceOf[String])
 
     val spark = SparkSession.builder().config(config).getOrCreate()
 
@@ -112,7 +144,7 @@ object DataLoader {
         , x(2).trim().toDouble, x(3).trim().toInt)
     }).toDF()
 
-    val tagDF = ratingRDD.map(f = line => {
+    val tagDF = tagRDD.map(f = line => {
       val x = line.split(",")
       Tag(x(0).trim().toInt, x(1).trim().toInt
         , x(2).trim(), x(3).trim().toInt)
@@ -121,6 +153,35 @@ object DataLoader {
     //将数据保存到Mongodb
     storeDataInMongo(movieDF,ratingDF,tagDF)
 
+    //缓存(对于当前业务，加不加缓存其实影响不大)
+    movieDF.cache()
+    tagDF.cache()
+
+
+    //将tagDF对mid做聚合操作，将tag拼接
+    //引入内置数据库
+    import org.apache.spark.sql.functions._
+
+    //agg拼接
+    val tagCollectDF = tagDF.groupBy($"mid").agg(concat_ws("|",collect_set($"tag")).as("tags"))
+
+
+
+
+    //将tags合并到movie表，产生新的movie数据集
+    val esMovieDF = movieDF.join(tagCollectDF,Seq("mid","mid"),"left")
+                          .select("mid","name","descri","timelong","issue",
+                                  "shoot","language","genres","actors","directors","tags")
+
+
+    //将tags保存到ES
+    storeDataInES(esMovieDF)
+
+    //删除缓存
+    movieDF.unpersist()
+    tagDF.unpersist()
+
+    spark.close()
 
   }
 
@@ -154,21 +215,21 @@ object DataLoader {
                 .save()
 
     //将Rating数据集写入到MongoDB
-    movieDF.write.option("uri",mongoConfig.uri)
+    ratingDF.write.option("uri",mongoConfig.uri)
               .option("collection",RATINGS_COLLECTION_NAME)
               .mode("overwrite")
               .format("com.mongodb.spark.sql")
               .save()
 
     //将Tag数据集写入到MongoDB
-    movieDF.write.option("uri",mongoConfig.uri)
+    tagDF.write.option("uri",mongoConfig.uri)
             .option("collection",TAGS_COLLECTION_NAME)
             .mode("overwrite")
             .format("com.mongodb.spark.sql")
             .save()
 
 
-    //创建索引
+    //创建索引 1:代表升序 -1：代表降序
     mongoClient(mongoConfig.db)(MOVIES_COLLECTION_NAME).createIndex(MongoDBObject("mid" -> 1))
     mongoClient(mongoConfig.db)(RATINGS_COLLECTION_NAME).createIndex(MongoDBObject("mid" -> 1))
     mongoClient(mongoConfig.db)(RATINGS_COLLECTION_NAME).createIndex(MongoDBObject("uid" -> 1))
@@ -180,4 +241,62 @@ object DataLoader {
   }
 
 
+  /**
+    * 保存数据到ES
+    * @param esMovieDF
+    * @param esConfig
+    */
+  private def storeDataInES(esMovieDF: DataFrame)(implicit esConfig:ESConfig): Unit = {
+
+    //需要操作的Index 名称
+    val indexName = esConfig.index
+    //连接ES配置
+    val settings = Settings.builder().put("cluster.name",esConfig.clusterName).build()
+
+    //连接ES客户端
+    val esClient = new PreBuiltTransportClient(settings)
+
+    //params += "es.transportHosts" -> "192.168.110.110:9300,192.168.110.111:9300,192.168.110.112:9300"
+    esConfig.transportHosts.split(",").foreach{
+        //模式匹配
+        case ES_HOST_PORT_REGEX(host:String,port:String) =>
+          esClient.addTransportAddress(new InetSocketTransportAddress(
+                                      InetAddress.getByName(host),port.toInt
+          ))
+    }
+
+    //判断如果Index是否存在，如果则存则删除
+    if(esClient.admin().indices().exists(new IndicesExistsRequest(indexName)).actionGet().isExists){
+      //删除index
+      esClient.admin().indices().delete(new DeleteIndexRequest(indexName)).actionGet()
+    }
+
+    //创建index
+    esClient.admin().indices().create(new CreateIndexRequest(indexName)).actionGet()
+
+    val movieOptions = Map("es.nodes" -> esConfig.httpHosts
+              ,"es.http.timeout" -> "100m"
+                ,"es.mapping.id" -> "mid")
+
+    val movieTypeName = s"$indexName/$ES_TAG_TYPE_NAME"
+    //保存数据
+    esMovieDF.write.options(movieOptions)
+                  .mode("overwrite")
+                  .format("org.elasticsearch.spark.sql")
+                  .save(movieTypeName)
+
+
+    /**
+      * LINUX 命令可以查询ES中的数据
+      * curl -XPOST '192.168.110.110:9200/recom/_search?pretty' -d '{"query":{"match_all":{}}}'
+      * URL查询ES中的数据
+      * http://192.168.110.110:9200/recom/Movie/{id}
+      * 例如:http://192.168.110.110:9200/recom/Movie/1
+      *
+      */
+
+
+
+
+  }
 }
