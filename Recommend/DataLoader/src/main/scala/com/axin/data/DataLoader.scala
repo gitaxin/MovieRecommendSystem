@@ -229,6 +229,8 @@ object DataLoader {
             .save()
 
 
+
+  StringIndexOutOfBoundsException
     //创建索引 1:代表升序 -1：代表降序
     mongoClient(mongoConfig.db)(MOVIES_COLLECTION_NAME).createIndex(MongoDBObject("mid" -> 1))
     mongoClient(mongoConfig.db)(RATINGS_COLLECTION_NAME).createIndex(MongoDBObject("mid" -> 1))
