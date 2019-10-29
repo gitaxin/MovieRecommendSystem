@@ -15,7 +15,7 @@ import org.apache.spark.sql.SparkSession
   * 1、目标
   * （1）优质电影
   *       获取所有历史数据中，评分个数最多的电影集合，统计每个电影评分个数 -->RateMoreMovies
-  *  (2)热闹电影
+  *  (2)近期热门电影
   *       按照月统计，这个月中评分最多的电影我们认为是热门电影，统计每个月中的每个电影的评分数量 -->RateMoreRecentlyMovie
   *  (3)电影的平均分
   *       把每个电影，所有用户评分进行平均，计算出每个电影的平均分 -> AverageMovies
@@ -83,7 +83,13 @@ object StatisticsApp extends App {
 
 
   //统计评分最多电影
-  StatisticsSystem.rateMore(spark)
+  //StatisticsSystem.rateMore(spark)
+
+  //近期热门电影
+  //StatisticsSystem.rateMoreRecently(spark)
+
+  //TOP10
+  StatisticsSystem.genresTop10(spark)(movies)
 
   ratings.unpersist()
   movies.unpersist()
