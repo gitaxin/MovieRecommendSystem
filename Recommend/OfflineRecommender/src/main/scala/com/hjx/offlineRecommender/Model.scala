@@ -1,4 +1,4 @@
-package com.axin.statistics
+package com.hjx.offlineRecommender
 
 /**
   * Created by Axin in 2019/10/27 12:21  
@@ -46,7 +46,7 @@ case class Movie(val mid:Int,val name:String,val descri:String,val timelong:Stri
   * 用户对电影评分的时间
   */
 
-case class Rating(val uid:Int,val mid:Int,val score:Double,val timestamp:Int)
+case class MovieRating(val uid:Int,val mid:Int,val score:Double,val timestamp:Int)
 
 
 /**
@@ -81,3 +81,9 @@ case class Recommendation(mid:Int,r:Double)
 
 //Seq:序列，相当于一个List
 case class GenresRecommendation(genres:String,recs:Seq[Recommendation])
+
+//用户推荐
+case class UserRecs(uid:Int,recs:Seq[Recommendation])
+
+//电影相似度
+case class MovieRecs(mid:Int,recs:Seq[Recommendation])

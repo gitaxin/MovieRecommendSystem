@@ -16,6 +16,7 @@
     <modules>
         <module>DataLoader</module>
         <module>Statistics</module>
+        <module>OfflineRecommender</module>
     </modules>
 
 
@@ -23,6 +24,8 @@
 
         <dependencies>
             <!-- 引入Spark相关的Jar包 -->
+
+            <!-- RDD操作 -->
             <dependency>
                 <groupId>org.apache.spark</groupId>
                 <artifactId>spark-core_2.11</artifactId>
@@ -30,6 +33,7 @@
                 <!-- provider如果存在，那么运行时该Jar包不存在，也不会打包到最终的发布版本中，只是编译器有效 -->
                 <!--<scope>provided</scope>-->
             </dependency>
+            <!-- SQL操作-->
             <dependency>
                 <groupId>org.apache.spark</groupId>
                 <artifactId>spark-sql_2.11</artifactId>
