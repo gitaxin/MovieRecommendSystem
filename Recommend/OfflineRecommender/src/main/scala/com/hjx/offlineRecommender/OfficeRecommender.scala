@@ -34,7 +34,7 @@ object OfficeRecommender {
 
   def main(args: Array[String]): Unit = {
 
-    var params = Map("spark.cores" -> "local[1]",
+    var params = Map("spark.cores" -> "local[2]",
       "mongo.uri" -> "mongodb://192.168.110.110:27017/recom",
       "mongo.db" -> "recom"
 
